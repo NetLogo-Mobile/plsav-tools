@@ -111,8 +111,27 @@
   </div>
 </div>
 
-<script src="core.js"></script>
 <script>
+// 异步加载 core.js，版本号用时间戳避免缓存
+(function () {
+  const script = document.createElement('script');
+  script.src = 'core.js?v=' + Date.now();
+  script.onload = function () {
+    // core.js 加载完成后再初始化 UI
+    if (typeof initUI === 'function') initUI();
+    else console.error('initUI 未定义');
+  };
+  script.onerror = function () {
+    console.error('core.js 加载失败');
+    document.getElementById('status').className = 'status err';
+    document.getElementById('status').textContent = '❌ 无法加载 core.js';
+  };
+  document.head.appendChild(script);
+})();
+</script>
+<script>
+function initUI() {
+
 // ---- core 转换函数由 core.js 提供 ----
 const $ = id => document.getElementById(id);
 const drop = $('drop');
@@ -189,6 +208,8 @@ $('download').addEventListener('click', () => {
   a.click();
   URL.revokeObjectURL(url);
 });
+
+}
 </script>
 </body>
 </html>
