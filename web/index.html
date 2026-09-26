@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLSAV → Verilog 转换器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f1116; color: #e4e6eb;
+    font-family: -apple-system, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px; line-height: 1.6; min-height: 100vh;
+    padding: 24px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  .sub { color: #7a8290; font-size: 13px; margin-bottom: 24px; }
+  .card {
+    background: #171a21; border: 1px solid #2a2f3a;
+    border-radius: 8px; padding: 20px; margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 14px; color: #7a8290; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 12px;
+  }
+  .drop {
+    border: 2px dashed #2a2f3a; border-radius: 8px;
+    padding: 40px 20px; text-align: center;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .drop:hover, .drop.active {
+    border-color: #4ea1ff; background: #122a4d33;
+  }
+  .drop .hint { color: #7a8290; font-size: 13px; margin-top: 8px; }
+  .drop .big { color: #4ea1ff; font-size: 16px; }
+  input[type=file] { display: none; }
+  .toolbar {
+    display: flex; gap: 8px; margin-bottom: 12px;
+    flex-wrap: wrap; align-items: center;
+  }
+  button, select {
+    background: #232733; border: 1px solid #353b48;
+    color: #e4e6eb; padding: 8px 16px;
+    border-radius: 6px; cursor: pointer;
+    font-family: inherit; font-size: 13px;
+  }
+  button:hover { background: #2c3140; border-color: #4ea1ff; }
+  button.primary { background: #2563eb; border-color: #2563eb; }
+  button.primary:hover { background: #1d4ed8; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  pre {
+    background: #0a0c10; border: 1px solid #2a2f3a;
+    border-radius: 6px; padding: 14px;
+    font-size: 12px; line-height: 1.5;
+    max-height: 65vh; overflow-y: auto;
+    white-space: pre; color: #c5cad3;
+    tab-size: 4;
+  }
+  .status { padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; display: none; }
+  .status.ok   { background: #0d3a1f; color: #6ee89a; display: block; }
+  .status.err  { background: #3d1414; color: #ff8a8a; display: block; }
+  .status.info { background: #122a4d; color: #7db7ff; display: block; }
+  .row { display: flex; gap: 20px; }
+  .col { flex: 1; min-width: 0; }
+  @media (max-width: 900px) { .row { flex-direction: column; } }
+  .meta { color: #5a6270; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>PLSAV → Verilog</h1>
+  <div class="sub">把物理实验室 .sav 存档转换为 Verilog（异步帧模型）</div>
+
+  <div class="card">
+    <h2>1. 载入 .sav 文件</h2>
+    <div class="drop" id="drop">
+      <div class="big">📁 点击或拖拽 .sav 文件到这里</div>
+      <div class="hint">支持标准 Physics Lab 存档（JSON 格式）</div>
+    </div>
+    <input type="file" id="file" accept=".sav,.txt,.json">
+  </div>
+
+  <div class="card">
+    <h2>2. 转换选项</h2>
+    <div class="toolbar">
+      <label style="color:#7a8290">端口排序</label>
+      <select id="portBy">
+        <option value="y_desc">Y 坐标倒序（推荐）</option>
+        <option value="ident">Identifier 字典序</option>
+      </select>
+      <label style="color:#7a8290;margin-left:16px">门延迟</label>
+      <select id="gateDelay">
+        <option value="0">0（无延迟）</option>
+        <option value="1" selected>1</option>
+        <option value="2">2</option>
+      </select>
+      <button class="primary" id="convert" disabled style="margin-left:auto">🔄 转换</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. 输出</h2>
+    <div id="status" class="status"></div>
+    <div class="toolbar">
+      <button id="copy" disabled>📋 复制</button>
+      <button id="download" disabled>⬇ 下载 .v</button>
+      <span class="meta" id="meta"></span>
+    </div>
+    <pre id="output">等待载入文件...</pre>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  引脚方向表（来源：physicsLab/circuit/elements/logicCircuit.py）
+// ============================================================
+const PIN_ROLE = {
+  'Logic Input':  {0:'out'}, 'Logic Output': {0:'in'},
+  'And Gate': {0:'in',1:'in',2:'out'}, 'Or Gate': {0:'in',1:'in',2:'out'},
+  'Nand Gate':{0:'in',1:'in',2:'out'}, 'Nor Gate':{0:'in',1:'in',2:'out'},
+  'Xor Gate': {0:'in',1:'in',2:'out'}, 'Xnor Gate':{0:'in',1:'in',2:'out'},
+  'Nimp Gate':{0:'in',1:'in',2:'out'}, 'Imp Gate':{0:'in',1:'in',2:'out'},
+  'Yes Gate': {0:'in',1:'out'},        'No Gate': {0:'in',1:'out'},
+  'Half Adder':      {0:'out',1:'out',2:'in',3:'in'},   // pin0=Sum, pin1=Carry
+  'Half Subtractor': {0:'out',1:'out',2:'in',3:'in'},   // pin0=Diff, pin1=Borrow
+  'Full Adder':      {0:'out',1:'out',2:'in',3:'in',4:'in'},
+  'Full Subtractor': {0:'out',1:'out',2:'in',3:'in',4:'in'},
+};
+
+// ============================================================
+//  Union-Find
+// ============================================================
+function find(p, x) {
+  while (p.get(x) !== x) {
+    p.set(x, p.get(p.get(x)));
+    x = p.get(x);
+  }
+  return x;
+}
+function union(p, a, b) {
+  const ra = find(p, a), rb = find(p, b);
+  if (ra !== rb) p.set(ra, rb);
+}
+
+// ============================================================
+//  核心转换
+// ============================================================
+function convert(savText, opts) {
+  opts = opts || {};
+  const portBy    = opts.portBy    || 'y_desc';
+  const gateDelay = opts.gateDelay != null ? opts.gateDelay : 1;
+
+  // --- 解析 .sav ---
+  let data;
+  try { data = JSON.parse(savText); }
+  catch (e) { throw new Error('.sav 不是合法 JSON: ' + e.message); }
+
+  let ss;
+  if (data.StatusSave) ss = JSON.parse(data.StatusSave);
+  else if (data.Experiment && data.Experiment.StatusSave)
+    ss = JSON.parse(data.Experiment.StatusSave);
+  else throw new Error('找不到 StatusSave 字段');
+
+  const elems = ss.Elements || [];
+  const wires = ss.Wires || [];
+
+  // --- Union-Find ---
+  const p = new Map();
+  for (const e of elems) {
+    const roles = PIN_ROLE[e.ModelID] || {};
+    for (const pin of Object.keys(roles)) {
+      const k = e.Identifier + '|' + pin;
+      p.set(k, k);
+    }
+  }
+  for (const w of wires) {
+    const a = w.Source + '|' + w.SourcePin;
+    const b = w.Target + '|' + w.TargetPin;
+    if (p.has(a) && p.has(b)) union(p, a, b);
+  }
+
+  // --- 分配 net 名字 ---
+  const nets = new Map();
+  for (const k of p.keys()) {
+    const r = find(p, k);
+    if (!nets.has(r)) nets.set(r, []);
+    nets.get(r).push(k);
+  }
+  const netname = new Map();
+  const sortedRoots = [...nets.keys()].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  sortedRoots.forEach((r, i) => netname.set(r, 'w' + i));
+
+  function nof(ident, pin) {
+    const k = ident + '|' + pin;
+    if (!p.has(k)) return null;
+    return netname.get(find(p, k));
+  }
+
+  // --- 端口排序 ---
+  function yCoord(e) {
+    const parts = e.Position.split(',').map(Number);
+    return parts[2];   // Position = "X, Z, Y"
+  }
+  const ins_e  = elems.filter(e => e.ModelID === 'Logic Input');
+  const outs_e = elems.filter(e => e.ModelID === 'Logic Output');
+
+  if (portBy === 'y_desc') {
+    ins_e.sort((a, b) => yCoord(b) - yCoord(a));
+    outs_e.sort((a, b) => yCoord(b) - yCoord(a));
+  } else {
+    ins_e.sort((a, b) => a.Identifier < b.Identifier ? -1 : 1);
+    outs_e.sort((a, b) => a.Identifier < b.Identifier ? -1 : 1);
+  }
+
+  const in_port  = new Map(ins_e.map((e, i)  => [e.Identifier, 'SW'  + i]));
+  const out_port = new Map(outs_e.map((e, i) => [e.Identifier, 'OUT' + i]));
+
+  // --- 收集驱动表达式 ---
+  const drivers = new Map();
+  function addDriver(net, expr) {
+    if (!net) return;
+    if (!drivers.has(net)) drivers.set(net, []);
+    drivers.get(net).push(expr);
+  }
+
+  for (const e of ins_e) addDriver(nof(e.Identifier, 0), in_port.get(e.Identifier));
+
+  for (const e of elems) {
+    const m = e.ModelID;
+    if (m === 'Logic Input' || m === 'Logic Output') continue;
+    const roles = PIN_ROLE[m];
+    if (!roles) continue;
+
+    const inPins  = Object.keys(roles).filter(k => roles[k] === 'in').map(Number).sort((a,b)=>a-b);
+    const outPins = Object.keys(roles).filter(k => roles[k] === 'out').map(Number).sort((a,b)=>a-b);
+    const inNets  = inPins.map(pin => nof(e.Identifier, pin));
+    const outNets = outPins.map(pin => nof(e.Identifier, pin));
+    if (inNets.some(n => !n) || outNets.some(n => !n)) continue;
+
+    let expr = null;
+    switch (m) {
+      case 'And Gate':   expr = `(${inNets[0]} & ${inNets[1]})`; break;
+      case 'Or Gate':    expr = `(${inNets[0]} | ${inNets[1]})`; break;
+      case 'Nand Gate':  expr = `~(${inNets[0]} & ${inNets[1]})`; break;
+      case 'Nor Gate':   expr = `~(${inNets[0]} | ${inNets[1]})`; break;
+      case 'Xor Gate':   expr = `(${inNets[0]} ^ ${inNets[1]})`; break;
+      case 'Xnor Gate':  expr = `~(${inNets[0]} ^ ${inNets[1]})`; break;
+      case 'Yes Gate':   expr = `${inNets[0]}`; break;
+      case 'No Gate':    expr = `~${inNets[0]}`; break;
+      case 'Nimp Gate':  expr = `(${inNets[0]} & ~${inNets[1]})`; break;
+      case 'Imp Gate':   expr = `(~${inNets[0]} | ${inNets[1]})`; break;
+      case 'Half Adder':
+        addDriver(outNets[0], `(${inNets[0]} ^ ${inNets[1]})`);   // Sum
+        addDriver(outNets[1], `(${inNets[0]} & ${inNets[1]})`);   // Carry
+        continue;
+      case 'Half Subtractor':
+        addDriver(outNets[0], `(${inNets[0]} ^ ${inNets[1]})`);   // Diff
+        addDriver(outNets[1], `(~${inNets[0]} & ${inNets[1]})`);  // Borrow
+        continue;
+      case 'Full Adder': {
+        const [a, b, cin] = inNets;
+        const [cout, sum] = outNets;
+        const t = `((${a}) ^ (${b}))`;
+        addDriver(sum,  `(${t} ^ ${cin})`);
+        addDriver(cout, `((${a} & ${b}) | (${cin} & ${t}))`);
+        continue;
+      }
+      case 'Full Subtractor': {
+        const [a, b, bin] = inNets;
+        const [bout, diff] = outNets;
+        const t = `((${a}) ^ (${b}))`;
+        addDriver(diff, `(${t} ^ ${bin})`);
+        addDriver(bout, `((~${a} & ${b}) | (~${t} & ${bin}))`);
+        continue;
+      }
+    }
+    if (expr) addDriver(outNets[0], expr);
+  }
+
+  // 无驱动 net → 0
+  for (const n of netname.values()) {
+    if (!drivers.has(n)) drivers.set(n, ["1'b0"]);
+  }
+
+  // --- 生成 Verilog ---
+  const allNets = [...drivers.keys()].sort((a,b) => parseInt(a.slice(1)) - parseInt(b.slice(1)));
+
+  const L = [];
+  L.push('`timescale 1ns/1ps');
+  L.push('');
+  L.push('// tick：仿真节拍，非硬件时钟。');
+  L.push('// 物理电路为异步/自定时；引入 tick 是为了在 Verilog 中');
+  L.push('// 重现物理实验室"每帧重算所有门"的仿真语义。');
+  L.push('// 等价于 SPICE 的 .tran 步长，不属于电路本体。');
+  L.push('');
+  L.push('module top (');
+  const ports = ['    input  wire tick'];
+  for (const e of ins_e)  ports.push(`    input  wire ${in_port.get(e.Identifier)}`);
+  for (const e of outs_e) ports.push(`    output wire ${out_port.get(e.Identifier)}`);
+  L.push(ports.join(',\n'));
+  L.push(');');
+  L.push('');
+
+  const decls = allNets.map(n => `${n} = 1'b0`).join(', ');
+  L.push(`    reg ${decls};`);
+  L.push('');
+  L.push('    always @(posedge tick) begin');
+  for (const n of allNets) {
+    const lst = drivers.get(n);
+    const expr = lst.length > 1 ? ' | '.join(lst) : lst[0];
+    L.push(`        ${n} <= ${expr};`);
+  }
+  L.push('    end');
+  L.push('');
+  for (const e of outs_e) {
+    const n = nof(e.Identifier, 0);
+    if (n) L.push(`    assign ${out_port.get(e.Identifier)} = ${n};`);
+  }
+  L.push('');
+  L.push('endmodule');
+
+  const stats = {
+    elements: elems.length,
+    wires: wires.length,
+    nets: drivers.size,
+    inputs: ins_e.length,
+    outputs: outs_e.length,
+  };
+  return { code: L.join('\n'), stats };
+}
+
+// ============================================================
+//  UI 逻辑
+// ============================================================
+const $ = id => document.getElementById(id);
+const drop = $('drop');
+const fileInput = $('file');
+let currentSav = null;
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('active'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('active'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('active');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    currentSav = reader.result;
+    showStatus('info', `已载入 ${file.name}（${(file.size/1024).toFixed(1)} KB）`);
+    $('convert').disabled = false;
+  };
+  reader.onerror = () => showStatus('err', '文件读取失败');
+  reader.readAsText(file);
+}
+
+function showStatus(type, msg) {
+  const el = $('status');
+  el.className = 'status ' + type;
+  el.textContent = msg;
+}
+
+$('convert').addEventListener('click', () => {
+  if (!currentSav) return;
+  try {
+    const result = convert(currentSav, {
+      portBy: $('portBy').value,
+      gateDelay: parseInt($('gateDelay').value),
+    });
+    $('output').textContent = result.code;
+    $('meta').textContent =
+      `${result.stats.elements} 元件 / ${result.stats.wires} 连线 / ` +
+      `${result.stats.nets} net / ${result.stats.inputs} 输入 / ${result.stats.outputs} 输出`;
+    showStatus('ok', '✅ 转换成功');
+    $('copy').disabled = false;
+    $('download').disabled = false;
+  } catch (e) {
+    showStatus('err', '❌ ' + e.message);
+    $('output').textContent = '';
+    $('copy').disabled = true;
+    $('download').disabled = true;
+  }
+});
+
+$('copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('output').textContent);
+    showStatus('ok', '✅ 已复制到剪贴板');
+    setTimeout(() => showStatus('info', ''), 1500);
+  } catch (e) {
+    showStatus('err', '复制失败：' + e.message);
+  }
+});
+
+$('download').addEventListener('click', () => {
+  const blob = new Blob([$('output').textContent], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'top.v';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
