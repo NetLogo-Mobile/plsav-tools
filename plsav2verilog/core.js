@@ -41,10 +41,10 @@ const PIN_ROLE = {
                        4:'in', 5:'in', 6:'in', 7:'in'},
 
   // ---- 8bit ----
-  '8bit Input':       {0:'in', 1:'in', 2:'in', 3:'in',
+  '8bit Input':       {0:'out', 1:'out', 2:'out', 3:'out',
                        4:'out', 5:'out', 6:'out', 7:'out'},
   '8bit Display':     {0:'in', 1:'in', 2:'in', 3:'in',
-                       4:'out', 5:'out', 6:'out', 7:'out'},
+                       4:'in', 5:'in', 6:'in', 7:'in'},
 };
 
 // Union-Find
