@@ -181,10 +181,6 @@ function convert(savText, opts) {
   const eb_e = elems.filter(e => e.ModelID === '8bit Input');
   const eb_port = new Map(eb_e.map((e,i) => [e.Identifier, 'SWB' + i]));
 
-  // 8bit Input：每个生成一个 8 位输入端口
-  const eb_e = elems.filter(e => e.ModelID === '8bit Input');
-  const eb_port = new Map(eb_e.map((e,i) => [e.Identifier, 'SWB' + i]));
-
   // 收集驱动
   const drivers = new Map();
   function addDriver(net, expr) {
@@ -282,4 +278,19 @@ function convert(savText, opts) {
   };
 }
 
-window.convert = convert;
+if (typeof window !== 'undefined') window.convert = convert;
+if (typeof module !== 'undefined' && module.exports) module.exports = { convert };
+
+if (typeof require !== 'undefined' && require.main === module) {
+  const fs = require('fs');
+  const path = process.argv[2];
+  if (!path) { console.error('用法: node core.js input.sav > top.v'); process.exit(1); }
+  const savText = fs.readFileSync(path, 'utf8');
+  const result = convert(savText, { portBy: process.env.PORT_BY || 'y_desc' });
+  process.stdout.write(result.code);
+  console.error('OK  元件=%d 连线=%d net=%d 输入=%d 输出=%d 孤立net=%d 未知模型=%j',
+    result.stats.elements, result.stats.wires, result.stats.nets,
+    result.stats.inputs, result.stats.outputs, result.stats.orphanNets,
+    result.stats.unknownModels);
+}
+
