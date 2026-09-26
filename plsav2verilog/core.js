@@ -106,9 +106,7 @@ function expandGate(m, ins, outs) {
     case 'Counter':         return [[outs[0], `${ins[0]}`]];
     case 'Random Generator':return [[outs[0], `${ins[0]}`]];
     case 'Multiplier':      return [[outs[0], `${ins[0]}`]];
-    case '8bit Input':      return [0,1,2,3].map(i => [outs[i], ins[i]]);
-    case '8bit Display':
-      return [0,1,2,3].map(i => [outs[i], ins[i]]);
+    // 8bit Input / Display 在 collect 阶段特殊处理，不走 expandGate
   }
   return null;
 }
@@ -180,6 +178,13 @@ function convert(savText, opts) {
   const in_port  = new Map(ins_e.map((e,i)  => [e.Identifier, 'SW'  + i]));
   const out_port = new Map(outs_e.map((e,i) => [e.Identifier, 'OUT' + i]));
 
+  const eb_e = elems.filter(e => e.ModelID === '8bit Input');
+  const eb_port = new Map(eb_e.map((e,i) => [e.Identifier, 'SWB' + i]));
+
+  // 8bit Input：每个生成一个 8 位输入端口
+  const eb_e = elems.filter(e => e.ModelID === '8bit Input');
+  const eb_port = new Map(eb_e.map((e,i) => [e.Identifier, 'SWB' + i]));
+
   // 收集驱动
   const drivers = new Map();
   function addDriver(net, expr) {
@@ -195,6 +200,18 @@ function convert(savText, opts) {
   for (const e of elems) {
     const m = e.ModelID;
     if (m === 'Logic Input' || m === 'Logic Output') continue;
+
+    // 8bit Input：8 位分别来自端口
+    if (m === '8bit Input') {
+      const pname = eb_port.get(e.Identifier);
+      for (let i = 0; i < 8; i++) {
+        addDriver(nof(e.Identifier, i), `${pname}[${i}]`);
+      }
+      continue;
+    }
+    // 8bit Display：纯输入，无驱动
+    if (m === '8bit Display') continue;
+
     const roles = PIN_ROLE[m];
     if (!roles) { unknownModels.add(m); continue; }
 
@@ -228,6 +245,7 @@ function convert(savText, opts) {
   L.push('module top (');
   const ports = ['    input  wire tick'];
   for (const e of ins_e)  ports.push(`    input  wire ${in_port.get(e.Identifier)}`);
+  for (const e of eb_e)   ports.push(`    input  wire [7:0] ${eb_port.get(e.Identifier)}`);
   for (const e of outs_e) ports.push(`    output wire ${out_port.get(e.Identifier)}`);
   L.push(ports.join(',\n'));
   L.push(');');
