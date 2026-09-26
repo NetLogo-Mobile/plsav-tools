@@ -106,7 +106,7 @@ function expandGate(m, ins, outs) {
     case 'Counter':         return [[outs[0], `${ins[0]}`]];
     case 'Random Generator':return [[outs[0], `${ins[0]}`]];
     case 'Multiplier':      return [[outs[0], `${ins[0]}`]];
-    case '8bit Input':      return [[outs[i], ins[i]] .map((_,i)=>[outs[i], ins[i]])[0]];
+    case '8bit Input':      return [0,1,2,3].map(i => [outs[i], ins[i]]);
     case '8bit Display':
       return [0,1,2,3].map(i => [outs[i], ins[i]]);
   }
