@@ -96,16 +96,61 @@ function expandGate(m, ins, outs) {
     }
 
     // ---- 时序：行为近似（不是精确，但不让 net 悬空） ----
-    case 'D Flipflop':      return [[outs[0], `${ins[0]}`]];
-    case 'T Flipflop':      return [[outs[0], `(${outs[0]} ^ ${ins[0]})`]];
-    case 'Real-T Flipflop': return [[outs[0], `(${outs[0]} ^ ${ins[0]})`]];
+    case 'D Flipflop': {
+      // 引脚 0=Q, 1=~Q, 2=D, 3=clk
+      const d = ins[0];
+      return [[outs[0], `${d}`], [outs[1], `~(${d})`]];
+    }
+    case 'T Flipflop':
+    case 'Real-T Flipflop': {
+      const t = ins[0];
+      const q = outs[0];
+      const next = `(${q} ^ ${t})`;
+      return [[q, next], [outs[1], `~${next}`]];
+    }
     case 'JK Flipflop': {
       const [j, k] = ins;
-      return [[outs[0], `((${j} & ~${outs[0]}) | (~${k} & ${outs[0]}))`]];
+      const q = outs[0];
+      const next = `((${j} & ~${q}) | (~${k} & ${q}))`;
+      return [[q, next], [outs[1], `~${next}`]];
     }
-    case 'Counter':         return [[outs[0], `${ins[0]}`]];
-    case 'Random Generator':return [[outs[0], `${ins[0]}`]];
-    case 'Multiplier':      return [[outs[0], `${ins[0]}`]];
+    case 'Counter': {
+      // 4-bit counter：out 引脚 0..3 = Q0..Q3，in 引脚 4=clk, 5=rst
+      const q = outs;
+      return [
+        [q[0], `~${q[0]}`],
+        [q[1], `(${q[1]} ^ ${q[0]})`],
+        [q[2], `(${q[2]} ^ (${q[1]} & ${q[0]}))`],
+        [q[3], `(${q[3]} ^ (${q[2]} & ${q[1]} & ${q[0]}))`],
+      ];
+    }
+    case 'Random Generator': {
+      const q = outs;
+      return [
+        [q[0], `(${q[0]} ^ ${q[3]})`],
+        [q[1], `${q[0]}`],
+        [q[2], `${q[1]}`],
+        [q[3], `${q[2]}`],
+      ];
+    }
+    case 'Multiplier': {
+      // 2x2 乘法器：in 4..7，out 0..3
+      const [a0, a1, b0, b1] = ins;
+      const p0 = `(${a0} & ${b0})`;
+      const t1 = `(${a1} & ${b0})`;
+      const t2 = `(${a0} & ${b1})`;
+      const p1 = `(${t1} ^ ${t2})`;
+      const c1 = `(${t1} & ${t2})`;
+      const t3 = `(${a1} & ${b1})`;
+      const p2 = `(${t3} ^ ${c1})`;
+      const p3 = `(${t3} & ${c1})`;
+      return [
+        [outs[0], p0],
+        [outs[1], p1],
+        [outs[2], p2],
+        [outs[3], p3],
+      ];
+    }
     // 8bit Input / Display 在 collect 阶段特殊处理，不走 expandGate
   }
   return null;
