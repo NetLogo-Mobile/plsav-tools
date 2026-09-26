@@ -308,7 +308,7 @@ function convert(savText, opts) {
   L.push('    always @(posedge tick) begin');
   for (const n of allNets) {
     const lst = drivers.get(n);
-    const expr = lst.length > 1 ? ' | '.join(lst) : lst[0];
+    const expr = lst.length > 1 ? lst.join(' | ') : lst[0];
     L.push(`        ${n} <= ${expr};`);
   }
   L.push('    end');
